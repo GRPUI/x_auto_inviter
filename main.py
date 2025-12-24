@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Set
+from typing import List
 
 from camoufox import AsyncCamoufox
 from loguru import logger
@@ -7,14 +7,15 @@ from playwright.async_api import Page
 
 from x_token_login import set_x_token_cookie
 from read_files import get_tokens_from_txt, get_users_from_txt
-from task_locking.in_redis import DistributedLock
+from task_locking.in_redis import DistributedLock, _redis_client
 
 
 async def safe_click(page: Page, selector):
     try:
         await page.click(selector, timeout=4000)
+        return True
     except Exception as e:
-        logger.error(f"Failed to click on {selector}: {e}")
+        return False
 
 
 async def get_x_link(users_to_invite: List[str], community: str, token: str, invited_users_key: str):
@@ -57,15 +58,17 @@ async def get_x_link(users_to_invite: List[str], community: str, token: str, inv
                 
                 try:
                     await page.type(".r-vhj8yc > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > input:nth-child(1)", user)
-                    await asyncio.gather(
+                    button_one, button_two = await asyncio.gather(
                         safe_click(page, "#typeaheadDropdown-3 > div:nth-child(2) > div:nth-child(1) > button:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > button:nth-child(2) > div:nth-child(1) > span:nth-child(1) > span:nth-child(1)"),
                         safe_click(page, "button.r-15ysp7h:nth-child(2) > div:nth-child(1)")
                     )
+                    if button_one or button_two:
+                        logger.success(f"Successfully invited user: {user}")
+                        await redis.sadd(invited_users_key, user)
+                    else:
+                        logger.warning(f"Failed to invite user: {user}. Seems like, their privacy settings strictly prohibit inviting.")
+
                     await safe_click(page, ".r-54znze > g:nth-child(1) > path:nth-child(1)")
-                    
-                    # Добавляем пользователя в набор приглашённых
-                    await redis.sadd(invited_users_key, user)
-                    logger.info(f"Successfully invited user: {user}")
                 except Exception as e:
                     logger.error(f"Failed to invite user {user}: {e}")
 
@@ -133,9 +136,10 @@ async def main_cli(tokens_file: str, users_file: str, workers: int, community: s
         logger.info("All workers completed")
         
         # Выводим статистику
-        redis = DistributedLock.redis
-        invited_count = await redis.scard(invited_users_key)
-        logger.info(f"Total users invited: {invited_count}/{len(users_to_invite)}")
+        redis = _redis_client.get()
+        if redis:
+            invited_count = await redis.scard(invited_users_key)
+            logger.info(f"Total users invited: {invited_count}/{len(users_to_invite)}")
     
     finally:
         # Закрываем Redis соединение
@@ -148,7 +152,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Invite users to an X community using a list of tokens and usernames.")
     parser.add_argument("-t", "--tokens", required=True, help="Path to a text file with tokens (one per line).")
     parser.add_argument("-u", "--users", required=True, help="Path to a text file with usernames (one per line).")
-    parser.add_argument("-c", "--community", default="https://x.com/", help="Community URL.")
+    parser.add_argument("-c", "--community", default="https://x.com/i/communities/1996945882479026553/", help="Community URL.")
     parser.add_argument("-w", "--workers", default=3, type=int, help="Number of parallel workers.")
     parser.add_argument("-r", "--redis", default="redis://localhost:6379", help="Redis URL (default: redis://localhost:6379).")
     args = parser.parse_args()
