@@ -4,7 +4,7 @@ from typing import Optional
 from contextvars import ContextVar
 from redis.asyncio import Redis
 
-_redis_client: ContextVar[Optional[Redis]] = ContextVar('redis_client', default=None)
+_redis_client: ContextVar[Optional[Redis]] = ContextVar("redis_client", default=None)
 
 
 class DistributedLock:
@@ -13,13 +13,13 @@ class DistributedLock:
     """
 
     def __init__(
-            self,
-            key: str,
-            ttl: int = 30,
-            retry_delay: float = 0.1,
-            retry_times: Optional[int] = None,
-            auto_extend: bool = False,
-            skip_if_locked: bool = False  # Новый параметр!
+        self,
+        key: str,
+        ttl: int = 30,
+        retry_delay: float = 0.1,
+        retry_times: Optional[int] = None,
+        auto_extend: bool = False,
+        skip_if_locked: bool = False,  # Новый параметр!
     ):
         self.key = f"lock:{key}"
         self.ttl = ttl
@@ -59,10 +59,10 @@ class DistributedLock:
 
     @classmethod
     async def init_redis(
-            cls,
-            redis_url: str = "redis://localhost:6379",
-            max_connections: int = 50,
-            **kwargs
+        cls,
+        redis_url: str = "redis://localhost:6379",
+        max_connections: int = 50,
+        **kwargs,
     ) -> Redis:
         redis_client = Redis.from_url(
             redis_url,
@@ -71,7 +71,7 @@ class DistributedLock:
             socket_keepalive=True,
             socket_connect_timeout=5,
             retry_on_timeout=True,
-            **kwargs
+            **kwargs,
         )
 
         try:
@@ -96,12 +96,7 @@ class DistributedLock:
         attempts = 0
 
         while True:
-            acquired = await self.redis.set(
-                self.key,
-                self.token,
-                nx=True,
-                ex=self.ttl
-            )
+            acquired = await self.redis.set(self.key, self.token, nx=True, ex=self.ttl)
 
             if acquired:
                 self._acquired = True
@@ -131,12 +126,7 @@ class DistributedLock:
         if not self.token:
             return False
 
-        result = await self.redis.eval(
-            self._release_script,
-            1,
-            self.key,
-            self.token
-        )
+        result = await self.redis.eval(self._release_script, 1, self.key, self.token)
 
         released = bool(result)
         self.token = None
@@ -149,11 +139,7 @@ class DistributedLock:
 
         extend_time = additional_time or self.ttl
         result = await self.redis.eval(
-            self._extend_script,
-            1,
-            self.key,
-            self.token,
-            extend_time
+            self._extend_script, 1, self.key, self.token, extend_time
         )
 
         return bool(result)
