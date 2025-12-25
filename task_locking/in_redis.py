@@ -84,6 +84,17 @@ class DistributedLock:
         return redis_client
 
     @classmethod
+    def get_redis_client(cls) -> Redis:
+        """Get the current Redis client synchronously"""
+        client = _redis_client.get()
+        if client is None:
+            raise RuntimeError(
+                "Redis client not initialized. "
+                "Call DistributedLock.init_redis() in lifespan."
+            )
+        return client
+
+    @classmethod
     async def close_redis(cls):
         client = _redis_client.get()
         if client is not None:

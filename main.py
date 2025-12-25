@@ -33,6 +33,7 @@ async def get_x_link(
         logger.debug("Loading cookies")
         await set_x_token_cookie(page, token, domain="x.com")
         await page.goto(community)
+        await safe_click(page, "button.r-1mnahxq > div:nth-child(1)") # пробуем нажать "Got it" после добавления в модераторы
         await page.mouse.wheel(0, 1000)
         await page.click(
             "button.r-1wron08:nth-child(2) > div:nth-child(1) > svg:nth-child(1)"
