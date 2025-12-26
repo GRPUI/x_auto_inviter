@@ -1,4 +1,6 @@
 import asyncio
+from asyncio import gather
+from datetime import datetime, UTC
 from typing import List
 
 from camoufox import AsyncCamoufox
@@ -19,13 +21,14 @@ async def safe_click(page: Page, selector):
 
 
 async def get_x_link(
-    users_to_invite: List[str], community: str, token: str, invited_users_key: str
+    community: str, token: str, joined_users_key: str
 ):
     """
     Приглашает пользователей в комьюнити, пропуская уже приглашённых.
     Использует Redis лок для предотвращения одновременной обработки одного пользователя.
     """
     async with AsyncCamoufox(headless=True, humanize=1) as browser:
+
         logger.debug("Browser instance created")
         page = await browser.new_page()
         logger.debug("Opening x homepage")
@@ -33,71 +36,96 @@ async def get_x_link(
         logger.debug("Loading cookies")
         await set_x_token_cookie(page, token, domain="x.com")
         await page.goto(community)
-        await safe_click(page, "button.r-1mnahxq > div:nth-child(1)") # пробуем нажать "Got it" после добавления в модераторы
+        username = await page.evaluate('''
+                            () => {
+                                const el = document.querySelector('#react-root > div > div > div.css-175oi2r.r-1f2l425.r-13qz1uu.r-417010.r-18u37iz > header > div > div > div > div.css-175oi2r.r-184id4b > div > button > div.css-175oi2r.r-1wbh5a2.r-dnmrzs.r-1ny4l3l > div > div.css-175oi2r.r-1awozwy.r-18u37iz.r-1wbh5a2 > div > div > div > span');
+                                return el ? el.textContent : null;
+                            }
+                        ''')
+        if not username:
+            return
+        await safe_click(page, "button.r-1mnahxq > div:nth-child(1) > span:nth-child(1) > span:nth-child(1)")
         await page.mouse.wheel(0, 1000)
-        await page.click(
-            "button.r-1wron08:nth-child(2) > div:nth-child(1) > svg:nth-child(1)"
-        )
-        await page.click(
-            "#layers > div.css-175oi2r.r-zchlnj.r-1d2f490.r-u8s1d.r-ipm5af.r-1p0dtai.r-105ug2t > div > div > div > div.css-175oi2r.r-1ny4l3l > div > div.css-175oi2r.r-j2cz3j.r-kemksi.r-1q9bdsx.r-qo02w8.r-1udh08x.r-u8s1d > div > div > div > a > div.css-175oi2r.r-16y2uox.r-1wbh5a2 > div > span"
+        await safe_click(
+            page,
+            "#react-root > div > div > div.css-175oi2r.r-1f2l425.r-13qz1uu.r-417010.r-18u37iz > main > div > div > div > div.css-175oi2r.r-kemksi.r-1kqtdi0.r-1ua6aaf.r-th6na.r-1phboty.r-16y2uox.r-184en5c.r-1abdc3e.r-1lg4w6u.r-f8sm7e.r-13qz1uu.r-1ye8kvj > div > div.css-175oi2r.r-f8sm7e.r-13qz1uu.r-1ye8kvj > div > div:nth-child(1) > div:nth-child(2) > div.css-175oi2r.r-17s6mgv.r-kzbkwu.r-3pj75a.r-ttdzmv.r-136ojw6 > div.css-175oi2r.r-18u37iz.r-d21r1u.r-1wtj0ep > div > div > div.css-175oi2r > button"
         )
 
-        for user in users_to_invite:
-            # Используем Redis лок для предотвращения одновременной обработки одного пользователя
-            lock = DistributedLock(
-                key=f"user_invite:{user}",
-                ttl=60,
-                skip_if_locked=True,  # Пропускаем если уже кто-то приглашает этого пользователя
-            )
+        await safe_click(page, ".r-ne48ov > div:nth-child(1) > div:nth-child(3) > button:nth-child(1) > div:nth-child(1)")
+        await page.keyboard.press("Escape")
+        try:
 
-            async with lock:
-                if not lock.acquired:
-                    logger.debug(
-                        f"User {user} is being invited by another worker, skipping"
-                    )
-                    continue
-
-                # Проверяем, был ли уже приглашён этот пользователь
+            if username:
+                if len(username) < 3:
+                    logger.warning(f"Username '{username}' is too short. Seems like it's not real username.")
+                    return
+                lock = DistributedLock(
+                    key=f"user_invite:{username}",
+                    ttl=60,
+                    skip_if_locked=True,  # Пропускаем если уже кто-то приглашает этого пользователя
+                )
                 redis = lock.redis
-                if await redis.sismember(invited_users_key, user):
-                    logger.debug(f"User {user} already invited, skipping")
-                    continue
+                await redis.sadd(joined_users_key, username.replace("@", ""))
+            else:
+                logger.warning(
+                    f"Failed to retrieve username"
+                )
+        except Exception as e:
+            logger.error(f"Failed to retrieve username: {e}")
 
-                try:
-                    await page.type(
-                        ".r-vhj8yc > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > input:nth-child(1)",
-                        user,
-                    )
-                    button_one, button_two = await asyncio.gather(
-                        safe_click(
-                            page,
-                            "#typeaheadDropdown-3 > div:nth-child(2) > div:nth-child(1) > button:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > button:nth-child(2) > div:nth-child(1) > span:nth-child(1) > span:nth-child(1)",
-                        ),
-                        safe_click(
-                            page, "button.r-15ysp7h:nth-child(2) > div:nth-child(1)"
-                        ),
-                    )
-                    if button_one or button_two:
-                        logger.success(f"Successfully invited user: {user}")
-                        await redis.sadd(invited_users_key, user)
-                    else:
-                        logger.warning(
-                            f"Failed to invite user: {user}. Seems like, their privacy settings strictly prohibit inviting."
-                        )
 
-                    await safe_click(
-                        page, ".r-54znze > g:nth-child(1) > path:nth-child(1)"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to invite user {user}: {e}")
+async def add_to_mod(
+    community: str, token: str, users_to_add: List[str]
+):
+    """
+    Приглашает пользователей в комьюнити, пропуская уже приглашённых.
+    Использует Redis лок для предотвращения одновременной обработки одного пользователя.
+    """
+    async with (AsyncCamoufox(headless=True, humanize=1) as browser):
 
+        logger.debug("Browser instance created")
+        page = await browser.new_page()
+        logger.debug("Opening x homepage")
+        await page.goto("https://x.com")
+        logger.debug("Loading cookies")
+        await set_x_token_cookie(page, token, domain="x.com")
+        await page.goto(community + "members" if community.endswith("/") else community + "/members")
+        await page.wait_for_load_state("networkidle")
+        for user in users_to_add:
+            await safe_click(page, "div.r-5oul0u:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2)")
+            await page.click(
+                "div.r-5oul0u:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2)",
+                click_count=2)
+            for letter in user:
+                await page.type("div.r-5oul0u:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > input:nth-child(1)", text=letter)
+            for _ in range(5):
+                await safe_click(page, "div.r-1h0z5md:nth-child(2) > button:nth-child(1) > div:nth-child(1) > div:nth-child(1) > svg:nth-child(2)")
+                text_on_button = await page.evaluate('''
+                    () => {
+                        const el = document.querySelector('.r-j2cz3j > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > span:nth-child(1)');
+                        return el ? el.textContent : null;
+                    }
+                ''')
+                await page.wait_for_timeout(100)
+                if text_on_button == "Add to mod team":
+                    await safe_click(page, ".r-j2cz3j > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1)")
+                    await safe_click(page, "button.r-6gpygo:nth-child(1)")
+                    break
+                elif text_on_button is None:
+                    button_result = await safe_click(page, "button.r-6gpygo:nth-child(1)")
+                    if button_result:
+                        break
+                elif text_on_button == 'Remove from mod team':
+                    break
+            await page.keyboard.press("Escape")
+            await safe_click(page, "div.r-5oul0u:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2)")
+            await safe_click(page, "button.r-1yadl64")
 
 async def worker(
     worker_id: int,
     token_queue: asyncio.Queue,
-    users_to_invite: List[str],
     community: str,
-    invited_users_key: str,
+    joined_users_key: str,
 ):
     """Воркер, который обрабатывает токены из очереди"""
     while True:
@@ -110,10 +138,9 @@ async def worker(
             logger.info(f"[Worker {worker_id}] Starting invites for token {index}")
             try:
                 await get_x_link(
-                    users_to_invite=users_to_invite,
                     community=community,
                     token=token,
-                    invited_users_key=invited_users_key,
+                    joined_users_key=joined_users_key,
                 )
                 logger.info(f"[Worker {worker_id}] Completed token {index}")
             except Exception as e:
@@ -129,10 +156,10 @@ async def worker(
 
 async def main_cli(
     tokens_file: str,
-    users_file: str,
     workers: int,
+    admin_token: str ,
     community: str = "https://x.com/i/communities/1996945882479026553/",
-    redis_url: str = "redis://localhost:6379",
+    redis_url: str = "redis://localhost:6379"
 ):
     # Инициализируем Redis
     try:
@@ -144,14 +171,13 @@ async def main_cli(
 
     try:
         tokens = get_tokens_from_txt(tokens_file)
-        users_to_invite = get_users_from_txt(users_file)
         total_tokens = len(tokens)
 
-        logger.info(f"Loaded {total_tokens} tokens and {len(users_to_invite)} users")
+        logger.info(f"Loaded {total_tokens} tokens")
         logger.info(f"Starting {workers} workers")
 
         # Ключ для хранения приглашённых пользователей в Redis
-        invited_users_key = f"invited_users:{community}"
+        joined_users_key = f"joined_users:{community}:{datetime.timestamp(datetime.now(UTC))}"
 
         # Создаем очередь токенов
         token_queue = asyncio.Queue()
@@ -164,7 +190,7 @@ async def main_cli(
 
         # Создаем воркеры
         worker_tasks = [
-            worker(i, token_queue, users_to_invite, community, invited_users_key)
+            worker(i, token_queue, community, joined_users_key)
             for i in range(workers)
         ]
 
@@ -175,8 +201,10 @@ async def main_cli(
         # Выводим статистику
         redis = _redis_client.get()
         if redis:
-            invited_count = await redis.scard(invited_users_key)
-            logger.info(f"Total users invited: {invited_count}/{len(users_to_invite)}")
+            get_users = await redis.smembers(joined_users_key)
+            await add_to_mod(community, admin_token, list(get_users))
+            joined_count = await redis.scard(joined_users_key)
+            logger.info(f"Total users joined: {joined_count}/{len(tokens)}")
 
     finally:
         # Закрываем Redis соединение
@@ -197,10 +225,10 @@ if __name__ == "__main__":
         help="Path to a text file with tokens (one per line).",
     )
     parser.add_argument(
-        "-u",
-        "--users",
+        "-a",
+        "--admin-token",
         required=True,
-        help="Path to a text file with usernames (one per line).",
+        help="Admin token for setting up the browser and inviting users."
     )
     parser.add_argument(
         "-c",
@@ -220,7 +248,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         asyncio.run(
-            main_cli(args.tokens, args.users, args.workers, args.community, args.redis)
+            main_cli(args.tokens, args.workers, args.admin_token, args.community, args.redis)
         )
         logger.info("Script completed successfully")
     except KeyboardInterrupt:
