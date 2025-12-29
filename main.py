@@ -35,7 +35,6 @@ async def get_x_link(
     ) as browser:
         while current_comments_quantity < quantity:
             token = random.choice(tokens)
-            comment = random.choice(comments)
             logger.debug("Browser instance created")
             page = await browser.new_page()
             logger.debug("Opening x homepage")
@@ -60,55 +59,46 @@ async def get_x_link(
             await page.wait_for_timeout(500)
             await page.keyboard.press("R")
             await page.wait_for_timeout(500)
-            await page.keyboard.type(comment)
-            await page.wait_for_timeout(1000)
-            await page.keyboard.press("Backspace")
-            await page.wait_for_timeout(500)
-            await safe_click(page, "div.r-slzeqm:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > button:nth-child(2)")
-            await page.wait_for_timeout(5000)
-            is_sent = True
-            for _ in range(3):
-                result = await page.evaluate('''
-                                () => {
-                                    const el = document.querySelector('div.r-1b43r93 > span:nth-child(1)');
-                                    return el ? el.textContent : null;
-                                }
-                            ''')
-                logger.debug(f"Sent result: {result}")
-                if result == "Something went wrong, but don’t fret — let’s give it another shot.":
-                    is_sent = False
-                    break
-                else:
-                    await page.wait_for_timeout(500)
-                    break
-            if is_sent:
-                current_comments_quantity += 1
-                await page.close()
-                continue
-            await page.click("div.r-1h8ys4a:nth-child(3) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2)", click_count=3)
-            await page.keyboard.press("Backspace")
-            await page.wait_for_timeout(1000)
-            await page.keyboard.type(random.choice(comments))
-            await safe_click(page, "div.r-slzeqm:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > button:nth-child(2)")
-            await page.wait_for_timeout(5000)
-            for _ in range(3):
-                result = await page.evaluate('''
-                                () => {
-                                    const el = document.querySelector('div.r-1b43r93 > span:nth-child(1)');
-                                    return el ? el.textContent : null;
-                                }
-                            ''')
-                logger.debug(f"Sent result: {result}")
-                if result == "Something went wrong, but don’t fret — let’s give it another shot.":
-                    is_sent = False
-                    break
-                else:
-                    await page.wait_for_timeout(500)
-                    break
-            if is_sent:
-                current_comments_quantity += 1
-                await page.close()
-                continue
+            for i in range(11):
+                logger.info(f"Attempt {i} to send a comment for token: {token}")
+                try:
+                    await page.click(
+                        "div.r-1h8ys4a:nth-child(3) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2)",
+                        click_count=3,
+                    timeout=1000)
+                except Exception as e:
+                    pass
+                await page.keyboard.press("Backspace")
+                await page.keyboard.type(random.choice(comments))
+                await page.wait_for_timeout(1000)
+                await page.keyboard.press("Backspace")
+                await page.wait_for_timeout(500)
+                await safe_click(page, "div.r-slzeqm:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > button:nth-child(2)")
+                await page.wait_for_timeout(5000)
+                is_sent = True
+                for _ in range(3):
+                    result = await page.evaluate('''
+                                    () => {
+                                        const el = document.querySelector('div.r-1b43r93 > span:nth-child(1)');
+                                        return el ? el.textContent : null;
+                                    }
+                                ''')
+                    logger.debug(f"Sent result: {result}")
+                    if result is not None and isinstance(result, str):
+                        is_sent = False
+                        break
+                    else:
+                        await page.wait_for_timeout(500)
+                        logger.success("Successfully sent comment")
+                        break
+                if is_sent:
+                    current_comments_quantity += 1
+                    continue
+                await page.click("div.r-1h8ys4a:nth-child(3) > div:nth-child(2) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2)", click_count=3)
+                await page.keyboard.press("Backspace")
+                await page.wait_for_timeout(1000)
+                logger.info(f"Haven't sent the comment yet for attempt {i}")
+            await page.close()
 
 async def main_cli(
     tokens_file: str,
